@@ -1,0 +1,10 @@
+/.venv/
+/.cache/
+/data/
+/logs/
+/models/
+/upstream/
+/wheels/
+/recording/
+/results/
+__pycache__/
