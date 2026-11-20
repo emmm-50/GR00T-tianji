@@ -3,6 +3,7 @@
 
 import argparse
 from collections import deque
+from contextlib import contextmanager
 import json
 from pathlib import Path
 import time
@@ -11,6 +12,7 @@ import cv2
 import numpy as np
 import rclpy
 from geometry_msgs.msg import PoseStamped
+from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CompressedImage, JointState
@@ -161,10 +163,15 @@ def recording(bag, step, selected_video=None):
 
 
 class Capture(Node):
-    def __init__(self, quad_topic):
+    def __init__(self, quad_topic, hz=15):
         super().__init__("gr00t_observation_capture")
+        self.quad_topic = quad_topic
         self.images = deque()
         self.states = {}
+        self.period = 1 / hz
+        self.latest = None
+        self.last_selection_ns = 0
+        self.create_timer(self.period, self.select, clock=Clock(clock_type=ClockType.STEADY_TIME))
         for key, typ in (
             ("eef", PoseStamped),
             ("joints", JointState),
@@ -185,32 +192,35 @@ class Capture(Node):
 
     def image(self, msg):
         now = time.monotonic_ns()
-        bgr = cv2.imdecode(np.frombuffer(msg.data, np.uint8), cv2.IMREAD_COLOR)
-        if bgr is None:
-            raise ValueError("invalid quad JPEG image")
-        rgb_eye, rgb_wrist = split_quad(bgr)
-        self.images.append((now, stamp(msg), rgb_eye, rgb_wrist))
+        self.images.append((now, msg))
         while self.images and now - self.images[0][0] > 5_000_000_000:
             self.images.popleft()
 
-    def snapshot(self):
-        if len(self.states) != 3 or not self.images:
-            return None
-        old = [x for x in self.images if x[0] <= self.images[-1][0] - 1_000_000_000]
-        if not old:
-            return None
-        chosen = (old[-1], self.images[-1])
+    def select(self):
+        """Retain only the latest complete sample. Decode its JPEGs on consumption."""
         now = time.monotonic_ns()
-        eef, joints, grip = (self.states[k][1] for k in ("eef", "joints", "gripper"))
-        arrays = native(
-            eef,
-            joints,
-            grip,
-            {
-                "right_eye": np.stack([x[2] for x in chosen]),
-                "right_wrist": np.stack([x[3] for x in chosen]),
-            },
-        )
+        since = self.last_selection_ns
+        if (len(self.states) != len(TOPICS) or not self.images or self.images[-1][0] < since
+                or any(rx < since for rx, _ in self.states.values())):
+            return
+        current = self.images[-1]
+        old = next((image for image in reversed(self.images) if image[0] <= current[0] - 1_000_000_000), None)
+        if old is not None:
+            self.latest = now, (old, current), self.states.copy()
+            self.last_selection_ns = now
+
+    def snapshot(self, selected):
+        now, chosen, states = selected
+        eef, joints, grip = (states[k][1] for k in ("eef", "joints", "gripper"))
+        views = []
+        for _, msg in chosen:
+            bgr = cv2.imdecode(np.frombuffer(msg.data, np.uint8), cv2.IMREAD_COLOR)
+            if bgr is None:
+                raise ValueError("invalid quad JPEG image")
+            views.append(split_quad(bgr))
+        eyes, wrists = zip(*views)
+        arrays = native(eef, joints, grip,
+                        {"right_eye": np.stack(eyes), "right_wrist": np.stack(wrists)})
         meta = {
             "source": "live_ros",
             "eef_frame_id": eef.header.frame_id,
@@ -218,34 +228,52 @@ class Capture(Node):
             "observation_clock": "local monotonic receive time; exposure time unverified",
             "image_history_seconds": (chosen[1][0] - chosen[0][0]) / 1e9,
             "camera_receive_monotonic_ns": [int(x[0]) for x in chosen],
-            "camera_header_stamp_ns": [int(x[1]) for x in chosen],
+            "camera_header_stamp_ns": [stamp(x[1]) for x in chosen],
+            "quad_topic": self.quad_topic,
+            "feedback_callback_monotonic_ns": {k: v[0] for k, v in states.items()},
             "ages_ms": {
                 "camera": (now - chosen[1][0]) / 1e6,
-                **{k: (now - v[0]) / 1e6 for k, v in self.states.items()},
+                **{k: (now - v[0]) / 1e6 for k, v in states.items()},
             },
             "eef_header_stamp_ns": stamp(eef),
             "joint_header_stamp_ns": stamp(joints),
         }
         return arrays, meta
 
+    def spin_once(self, timeout=0.02):
+        self.executor.spin_once(timeout_sec=timeout)
 
-def read_live(timeout, quad_topic="/quad_tile/jpeg/compressed"):
-    """Capture a read-only live snapshot and its callback timestamps."""
+    def read(self, timeout):
+        started = time.monotonic_ns()
+        deadline = started + int(timeout * 1e9)
+        # Choose the nearer sampling tick. Past the midpoint, wait for the
+        # next real selection; keep its actual timestamp in either case.
+        earliest = started - self.period * 1e9 / 2
+        while time.monotonic_ns() < deadline:
+            if self.latest is not None and self.latest[0] >= earliest:
+                selected, self.latest = self.latest, None
+                return self.snapshot(selected)
+            self.spin_once()
+        raise RuntimeError(f"timed out; states={list(self.states)}, quad_frames={len(self.images)}")
+
+
+@contextmanager
+def live_capture(quad_topic="/quad_tile/jpeg/compressed"):
     rclpy.init()
     node = Capture(quad_topic)
+    executor = rclpy.get_global_executor()
+    executor.add_node(node)
     try:
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            rclpy.spin_once(node, timeout_sec=0.1)
-            result = node.snapshot()
-            if result is not None:
-                result[1]["quad_topic"] = quad_topic
-                result[1]["feedback_callback_monotonic_ns"] = {k: v[0] for k, v in node.states.items()}
-                return result
-        raise RuntimeError(f"timed out; states={list(node.states)}, quad_frames={len(node.images)}")
+        yield node
     finally:
+        executor.remove_node(node)
         node.destroy_node()
         rclpy.shutdown()
+
+
+def read_live(timeout, quad_topic="/quad_tile/jpeg/compressed"):
+    with live_capture(quad_topic) as node:
+        return node.read(timeout)
 
 
 def save_snapshot(path, arrays, meta, *, compressed=False):

@@ -54,6 +54,37 @@ class ChunkTest(unittest.TestCase):
             )
 
 
+class BatchDecodeTest(unittest.TestCase):
+    def test_batch_matches_scalar_and_preserves_errors(self):
+        from tianji_adapter.geometry import (
+            decode_droid_matrices, decode_droid_matrix, encode_droid_pose,
+        )
+
+        rng = np.random.default_rng(123)
+        positions = rng.normal(size=(40, 3))
+        rotations = Rotation.from_euler("xyz", rng.uniform(-0.8, 0.8, size=(40, 3)))
+        poses = np.array([encode_droid_pose(position, quat)
+                          for position, quat in zip(positions, rotations.as_quat())])
+        decoded = decode_droid_matrices(poses)
+        assert_allclose(decoded[:, :3, 3], positions, atol=1e-12)
+        assert_allclose(decoded[:, :3, :3], rotations.as_matrix(), atol=1e-12)
+        assert_allclose(decode_droid_matrix(poses[0]), decoded[0], atol=1e-12)
+        self.assertEqual(decode_droid_matrices(np.empty((0, 9))).shape, (0, 4, 4))
+        for index, expected in ((slice(3, 6), "degenerate first"),
+                                (slice(6, 9), "degenerate second")):
+            invalid = poses.copy()
+            invalid[2, index] = 0
+            with self.assertRaisesRegex(ValueError, expected):
+                decode_droid_matrices(invalid)
+
+    def test_empty_targets(self):
+        from tianji_adapter.geometry import ik_targets
+
+        self.assertEqual(ik_targets(np.empty((0, 9)), [], observation_timestamp_ns=1,
+                                    observation_clock="bag", model_base_from_world=np.eye(4),
+                                    right_tool_from_model_tool=np.eye(4)), [])
+
+
 class AnchoredTest(unittest.TestCase):
     def test_anchor_repeated_absolute_targets(self):
         from tianji_adapter.geometry import anchored_ik_targets, encode_droid_pose

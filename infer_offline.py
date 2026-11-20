@@ -108,13 +108,15 @@ def main():
     p.add_argument('--stride', type=int, default=8)
     p.add_argument('--warmup', type=int, default=1)
     p.add_argument('--denoising-steps', type=int, default=4)
+    p.add_argument('--compile-action-head', action='store_true',
+                   help='Use torch.compile max-autotune on the action head (slow first call)')
     p.add_argument('--seed', type=int, default=42)
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--check-only', action='store_true',
                    help='CPU sample and checkpoint processor numerical check, no model or tokenizer')
     a = p.parse_args()
-    if a.start < 0 or a.count < 1 or a.stride < 1 or a.warmup < 0:
-        p.error('start >= 0, count >= 1, stride >= 1, warmup >= 0 required')
+    if a.start < 0 or a.count < 1 or a.stride < 0 or a.warmup < 0:
+        p.error('start >= 0, count >= 1, stride >= 0, warmup >= 0 required')
     if a.check_only:
         if not a.dataset:
             p.error('--check-only requires --dataset')
@@ -147,6 +149,9 @@ def main():
     start = time.perf_counter()
     policy = Gr00tPolicy(embodiment_tag=TAG, model_path=str(a.model), device='cuda')
     policy.model.action_head.num_inference_timesteps = a.denoising_steps
+    if a.compile_action_head:
+        from gr00t_compile import compile_action_head
+        compile_action_head(policy)
     torch.cuda.synchronize()
     load_seconds = time.perf_counter() - start
     modality = policy.get_modality_config()
@@ -174,7 +179,7 @@ def main():
     torch.cuda.reset_peak_memory_stats()
     records = []
     for i, step in enumerate(steps):
-        obs = first_obs if i == 0 else make_obs(step)
+        obs = first_obs if i == 0 or a.stride == 0 else make_obs(step)
         torch.cuda.synchronize()
         start = time.perf_counter()
         actions, _ = policy.get_action(obs)
@@ -192,6 +197,7 @@ def main():
               'observations': str(a.observations) if a.observations else None,
               'episode': a.episode if a.dataset else None, 'seed': a.seed,
               'denoising_steps': a.denoising_steps, 'warmup_calls': a.warmup,
+              'compile_action_head': a.compile_action_head,
               'load_seconds': load_seconds, 'cuda_device': torch.cuda.get_device_name(),
               'modality': {k: {'keys': v.modality_keys, 'delta_indices': v.delta_indices}
                            for k, v in modality.items() if k in ('video', 'state', 'action', 'language')},

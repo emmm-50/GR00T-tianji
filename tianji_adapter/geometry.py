@@ -64,24 +64,38 @@ def encode(
 
 
 def decode_droid_matrix(eef_9d):
-    """Decode policy pose into physical DROID base/tool transform."""
+    """Decode one policy pose into a physical DROID base/tool transform."""
     x = np.asarray(eef_9d, dtype=float)
-    if x.shape != (9,) or not np.all(np.isfinite(x)):
+    if x.shape != (9,):
         raise ValueError("eef_9d must contain nine finite values")
-    a, b = x[3:6], x[6:9]
-    if np.linalg.norm(a) < 1e-8:
+    return decode_droid_matrices(x[None, :])[0]
+
+
+def decode_droid_matrices(eef_chunk):
+    """Batch equivalent of decode_droid_matrix for an (N, 9) action chunk."""
+    x = np.asarray(eef_chunk, dtype=float)
+    if x.ndim != 2 or x.shape[1] != 9:
+        raise ValueError("expected EEF (N,9)")
+    if len(x) == 0:
+        return np.empty((0, 4, 4))
+    a, b = x[:, 3:6], x[:, 6:9]
+    a_norm = np.linalg.norm(a, axis=1)
+    if not np.all(np.isfinite(x)):
+        raise ValueError("eef_9d must contain nine finite values")
+    if np.any(a_norm < 1e-8):
         raise ValueError("degenerate first rotation row")
-    a = a / np.linalg.norm(a)
-    b = b - np.dot(a, b) * a
-    if np.linalg.norm(b) < 1e-8:
+    a = a / a_norm[:, None]
+    b = b - np.sum(a * b, axis=1)[:, None] * a
+    b_norm = np.linalg.norm(b, axis=1)
+    if np.any(b_norm < 1e-8):
         raise ValueError("degenerate second rotation row")
-    b = b / np.linalg.norm(b)
-    r_model = np.stack((a, b, np.cross(a, b))) @ DROID_C.T
-    angles = _euler(Rotation.from_matrix(r_model), "XYZ")
-    r = Rotation.from_euler("xyz", angles).as_matrix()
-    t = np.eye(4)
-    t[:3, :3], t[:3, 3] = r, x[:3]
-    return t
+    b = b / b_norm[:, None]
+    model_rotation = np.stack((a, b, np.cross(a, b)), axis=1) @ DROID_C.T
+    angles = _euler(Rotation.from_matrix(model_rotation), "XYZ")
+    result = np.broadcast_to(np.eye(4), (len(x), 4, 4)).copy()
+    result[:, :3, :3] = Rotation.from_euler("xyz", angles).as_matrix()
+    result[:, :3, 3] = x[:, :3]
+    return result
 
 
 def decode(eef_9d, *, model_base_from_world, right_tool_from_model_tool):
@@ -118,10 +132,13 @@ def ik_targets(
         raise ValueError("observation clock and finite gripper values required")
     world_from_base = np.linalg.inv(_rigid(model_base_from_world))
     model_tool_from_right_tool = np.linalg.inv(_rigid(right_tool_from_model_tool))
+    if not len(eef):
+        return []
+    transforms = world_from_base @ decode_droid_matrices(eef) @ model_tool_from_right_tool
+    positions = transforms[:, :3, 3]
+    quaternions = Rotation.from_matrix(transforms[:, :3, :3]).as_quat()
     targets = []
-    for i, (pose, gripper) in enumerate(zip(eef, grip)):
-        t = world_from_base @ decode_droid_matrix(pose) @ model_tool_from_right_tool
-        p, q = t[:3, 3], Rotation.from_matrix(t[:3, :3]).as_quat()
+    for i, (p, q, gripper) in enumerate(zip(positions, quaternions, grip)):
         targets.append(
             {
                 "index": i,
@@ -138,11 +155,12 @@ def ik_targets(
     return targets
 
 
-def nominal_world_right_tool(joint_names, joint_positions, urdf_path):
+def nominal_world_right_tool(joint_names, joint_positions, urdf_path, *, model=None):
     """FK from named measured joints; world is APEX convention, not calibration."""
     import pinocchio as pin
 
-    model = pin.buildModelFromUrdf(str(urdf_path))
+    if model is None:
+        model = pin.buildModelFromUrdf(str(urdf_path))
     q = pin.neutral(model)
     measured = dict(zip(joint_names, joint_positions))
     for side in "LR":

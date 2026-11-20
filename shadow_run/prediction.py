@@ -81,6 +81,23 @@ def compare_tool_hypotheses(result, hypotheses):
     return out
 
 
+def add_tool_sensitivity(result):
+    """Add diagnostic tool hypotheses to an existing prediction, using CPU only."""
+    started = time.perf_counter()
+    offset = np.eye(4)
+    offset[2, 3] = 0.05
+    rotation = np.eye(4)
+    rotation[:3, :3] = Rotation.from_euler('z', 90, degrees=True).as_matrix()
+    hypotheses = compare_tool_hypotheses(result, {'z_plus_50mm': offset, 'z_plus_90deg': rotation})
+    result['tool_sensitivity'] = {
+        name: {'right_tool_from_model_tool': item['right_tool_from_model_tool'],
+               'difference_from_baseline': item['difference_from_baseline']}
+        for name, item in hypotheses.items()
+    }
+    result['timing_s']['tool_sensitivity'] = time.perf_counter() - started
+    return result
+
+
 class PredictionPolicy:
     def __init__(self, policy, modality, quantiles):
         self.policy = policy
@@ -156,7 +173,7 @@ class PredictionPolicy:
                               'postprocess': end - inferred, 'total': end - start}
         return result
 
-def load_policy(*, model_path=MODEL, device='cuda', denoising_steps=4):
+def load_policy(*, model_path=MODEL, device='cuda', denoising_steps=4, compile_action_head=False):
     """Load the original policy once; retain the returned object for all chunks."""
     from gr00t.data.embodiment_tags import EmbodimentTag
     from gr00t.policy.gr00t_policy import Gr00tPolicy
@@ -165,6 +182,9 @@ def load_policy(*, model_path=MODEL, device='cuda', denoising_steps=4):
     model_path = Path(model_path)
     policy = Gr00tPolicy(embodiment_tag=tag, model_path=str(model_path), device=device)
     policy.model.action_head.num_inference_timesteps = denoising_steps
+    if compile_action_head:
+        from gr00t_compile import compile_action_head as enable_compile
+        enable_compile(policy)
     quantiles = json.loads((model_path / 'statistics.json').read_text())[tag.value]['state']
     return PredictionPolicy(policy, policy.get_modality_config(), quantiles)
 
@@ -173,25 +193,19 @@ def main():
     """JSONL worker: one load notification, followed by one result per request."""
     output = _protocol if _protocol is not None else _protocol_stream()
     started = time.perf_counter()
-    policy = load_policy()
-    print(json.dumps({'loaded': True, 'load_s': time.perf_counter() - started}), file=output, flush=True)
-    offset = np.eye(4)
-    offset[2, 3] = 0.05
-    rotation = np.eye(4)
-    rotation[:3, :3] = Rotation.from_euler('z', 90, degrees=True).as_matrix()
+    compiled = os.environ.get('GR00T_TORCH_COMPILE') == '1'
+    policy = load_policy(compile_action_head=compiled)
+    import torch
+    print(json.dumps({'loaded': True, 'load_s': time.perf_counter() - started,
+                      'compile_action_head': compiled, 'torch_threads': torch.get_num_threads(),
+                      'torch_interop_threads': torch.get_num_interop_threads()}), file=output, flush=True)
     for line in sys.stdin:
         request = json.loads(line)
         snapshot, meta = load_snapshot(request['path'])
         result = policy.predict(snapshot, meta, request['instruction'],
                                 fk_pose=request['fk_pose'], seed=request.get('seed'))
-        started = time.perf_counter()
-        hypotheses = compare_tool_hypotheses(result, {'z_plus_50mm': offset, 'z_plus_90deg': rotation})
-        result['tool_sensitivity'] = {
-            name: {'right_tool_from_model_tool': item['right_tool_from_model_tool'],
-                   'difference_from_baseline': item['difference_from_baseline']}
-            for name, item in hypotheses.items()
-        }
-        result['timing_s']['tool_sensitivity'] = time.perf_counter() - started
+        if not request.get('defer_tool_sensitivity', False):
+            add_tool_sensitivity(result)
         print(json.dumps(result, allow_nan=False), file=output, flush=True)
 
 

@@ -2,13 +2,17 @@
 
 在天玑 Jetson AGX Orin 上运行 NVIDIA GR00T N1.7 3B，用右眼、右腕图像及机器人反馈预测右臂末端目标。现场入口只订阅观测。关节候选由外部天玑 IK 生成，送入安装版 VLAHOST 的进程内模拟发布器。**目前验证到软件接收。实物跟踪、夹爪开度和零样本抓取均未验收。**
 
-## 已验证的结果
+80 块长时复测中，稳定段 40.34 s 实收 604 条，平均 14.949 Hz。首条目标年龄中位为 601 ms，跨块间隔中位为 66.75 ms。[异步管线与长时复测](shadow_run/PIPELINE.zh-CN.md)
+
+此前的四块现场复测中，模拟 Host 连续实收 60 条，首尾 3.934 s 的窗口平均 14.999 Hz。视觉策略每块耗时 496–705 ms。[性能复测与复跑命令](shadow_run/PERFORMANCE.zh-CN.md)
+
+## 2026-11-20 初始结果
 
 | 环节 | 天玑上的结果 |
 |---|---|
 | 官方 DROID 样本 | 固定版本的策略与动作处理器完成 BF16 GPU 推理。单独测量的 5 次热机推理中位为 518 ms。三集共 844 行的状态和动作分别对照原始欧拉角，物理朝向最大误差均低于 7.1 × 10⁻⁸ rad。 |
 | 录像回放 | 三个观测块共 68 条候选经进程内 Host 接收。录像按虚拟时间编排，实际回调间隔中位约 837 ms。 |
-| 现场只读快照 | 三个块共 120 个候选，3 条经模拟 Host 接收。GPU 推理 0.777–0.860 s，入选目标的 IK 计算 0.730–0.740 s，快照至实际回调 1.935–2.068 s。当前无法持续以 15 Hz 接收。 |
+| 现场只读快照 | 三个块共 120 个候选，3 条经模拟 Host 接收。GPU 推理 0.777–0.860 s，入选目标的 IK 计算 0.730–0.740 s，快照至实际回调 1.935–2.068 s。该轮无法持续以 15 Hz 接收。 |
 | 名义 IK | 共享 95 mm URDF 对应的 IK 可由原始双臂 14 轴反馈初始化。入选目标在单个区间结束时仍有 9.09–13.47 mm、9.00–15.38° 的名义残差；离线保持同一目标可进一步收敛。物理 TCP 精度尚待外测。 |
 
 上述延迟来自不同输入和计时区间。GPU 计时含 CUDA 同步，端到端计时还含快照处理、IK、等待和模拟接收。[影子实验汇总](shadow_run/RESULTS.zh-CN.md)
@@ -30,7 +34,7 @@ python infer_offline.py --dataset data/droid_sample --episode 1 --start 16 \
   --count 5 --stride 8 --warmup 2 --output results/droid_gpu.json
 ```
 
-对天玑录像或现场快照，先按观测适配说明采样。完整影子运行还需要外部 `eef-control` 中的 `native_ik`、`host_mock`、共享 URDF 和 APEX 安装版 VLAHOST。可用 `TIANJI_EEF_CONTROL` 指定外部工作区，用 `--bag` 或 `TIANJI_BAG` 指定自己的录像。外部 IK、厂商 SDK、URDF、模型权重和现场采样需分别准备。实测使用了外部工作区中的配套改动，仅克隆本仓库不足以复现 Host 全链路。[观测采集与格式](tianji_adapter/README.zh-CN.md) · [IK 构建与影子复跑](shadow_run/README.zh-CN.md)
+天玑录像和现场影子运行依赖 `tianji-openpi` 的配套提交 `8c32a25`，其中包含离线 IK、场景生成器和内存 Host。默认从相邻的 `pi05/eef-control` 加载，也可设置 `TIANJI_EEF_CONTROL`。运行时还需天玑共享 95 mm URDF 及网格、已安装的 APEX/VLAHOST 和本机模型。录像用 `--bag` 或 `TIANJI_BAG` 指定。[配套 IK 与 Host 源码](https://github.com/emmm-50/tianji-openpi/tree/8c32a25ae45fe2ae45dd0bf6ae0f3927c03f702b/eef-control) · [构建与影子复跑](shadow_run/README.zh-CN.md) · [观测采集](tianji_adapter/README.zh-CN.md)
 
 ## 动作和时间约定
 

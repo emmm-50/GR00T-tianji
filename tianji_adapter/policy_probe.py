@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from .geometry import DROID_C, decode_droid_matrix, pack_eef_matrix
+from .geometry import DROID_C, decode_droid_matrices, pack_eef_matrix
 from .observations import load_snapshot
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -69,7 +69,7 @@ def summarize(state, chunk, quantiles):
     eef = chunk["eef_9d"]
     offsets = 1000 * np.linalg.norm(eef[:, :3] - state["eef_9d"][:3], axis=1)
     droid_rotations = Rotation.from_matrix(
-        [decode_droid_matrix(pose)[:3, :3] for pose in [state["eef_9d"], *eef]]
+        decode_droid_matrices(np.vstack((state["eef_9d"], eef)))[:, :3, :3]
     )
     turns_deg = np.rad2deg((droid_rotations[0].inv() * droid_rotations[1:]).magnitude())
     # Include the transition from the observed DROID state to the first target.
