@@ -96,7 +96,7 @@
 
 本次证明了约四秒窗口内的模拟 Host 实际接收节拍。视觉策略仍需约半秒生成一个动作块。机器人没有执行动作，单区间残差和跨块关节变化也不构成物理跟踪或抓取精度验收。
 
-天玑私有复核材料位于 `logs/perf-probe-20261121/`，最终真实回调和逐候选原始记录位于 `logs/perf-shadow-field-06/run.json`。未上传快照、日志或权重。GR00T 主库改动涉及离线入口、动作头编译、几何批处理、ROS 采集与影子调度，外置 IK 的改动限于 `eef-control/native_ik` 及 `host_mock/ik_adapter.py`。几何与接收单测共 13 项通过，外置 IK 录像和 Host 联调也已通过。
+天玑私有复核材料位于 `logs/perf-probe-20261121/`，最终真实回调和逐候选原始记录位于 `logs/perf-shadow-field-06/run.json`。未上传快照、日志或权重。GR00T 主库改动涉及离线入口、动作头编译、几何批处理、ROS 采集与影子调度，外置 IK 的改动限于 `eef-control/native_ik` 及 `host_mock/ik_adapter.py`。当时使用几何对照、接收时序和外置 IK 录像联调核验了这次优化。
 
 ## 天玑复跑
 

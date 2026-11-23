@@ -53,16 +53,6 @@ def encode_droid_pose(position_m, quaternion_xyzw):
     return pack_eef_matrix(position_m, model_rotation, DROID_C)
 
 
-def encode(
-    position_m, quaternion_xyzw, *, model_base_from_world, right_tool_from_model_tool
-):
-    """world/right_tool pose to model XYZ + first two rotation rows."""
-    base = _rigid(model_base_from_world)
-    tool = _rigid(right_tool_from_model_tool)
-    t = base @ pose_matrix(position_m, quaternion_xyzw) @ tool
-    return encode_droid_pose(t[:3, 3], Rotation.from_matrix(t[:3, :3]).as_quat())
-
-
 def decode_droid_matrix(eef_9d):
     """Decode one policy pose into a physical DROID base/tool transform."""
     x = np.asarray(eef_9d, dtype=float)
@@ -96,18 +86,6 @@ def decode_droid_matrices(eef_chunk):
     result[:, :3, :3] = Rotation.from_euler("xyz", angles).as_matrix()
     result[:, :3, 3] = x[:, :3]
     return result
-
-
-def decode(eef_9d, *, model_base_from_world, right_tool_from_model_tool):
-    model_base_from_world = _rigid(model_base_from_world)
-    right_tool_from_model_tool = _rigid(right_tool_from_model_tool)
-    t = decode_droid_matrix(eef_9d)
-    t = (
-        np.linalg.inv(model_base_from_world)
-        @ t
-        @ np.linalg.inv(right_tool_from_model_tool)
-    )
-    return t[:3, 3], Rotation.from_matrix(t[:3, :3]).as_quat()
 
 
 def ik_targets(

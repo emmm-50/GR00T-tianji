@@ -1,17 +1,6 @@
 # 离线几何验证
 
-在天玑项目根目录运行。先执行几何测试和 DROID 样本核对，再使用 ROS 系统 Python、共享 URDF、原始录像及已保存的快照重建 FK 结果。报告写入项目根目录的 `results/adapter_geometry_*.json`。`--snapshot` 可重复指定，`--window-snapshot` 使用该录像快照的两帧时间戳定义窗口；不指定时只统计全包。
-
-```bash
-cd /path/to/gr00t-tianji
-export TIANJI_BAG=/path/to/recording
-# 可选：设置 TIANJI_EEF_CONTROL 指向 eef-control，默认使用相邻的 pi05/eef-control
-.venv/bin/python -m unittest tianji_adapter.test_geometry
-.venv/bin/python -m tianji_adapter.verify_droid
-source /etc/apex/apex_ros_env.sh
-/usr/bin/python3 -m tianji_adapter.compare_fk --snapshot /path/to/bag.npz \
-  --window-snapshot /path/to/bag.npz
-```
+天玑安装项目环境并取得官方 DROID 样本后，可在仓库根目录执行 `.venv/bin/python -m tianji_adapter.verify_droid`。它使用公开 parquet 的原始欧拉角分别核对状态和动作的旋转约定。
 
 **DROID 来源。** 固定版本的 NVIDIA 样本转换器从 `observation.state.cartesian_position` 和 `action.cartesian_position` 生成对应的 `eef_9d`。验证使用这两个原始列，根据 DROID 实际 FK 的欧拉约定分别重建物理旋转，再与策略列的解码结果比较。三集 844 行中，状态与动作的最大姿态误差均小于 7.1e-8 rad。仅对策略矩阵右乘 `C.T` 时，两者误差的中位数分别达到 1.227 和 1.217 rad。多轴真值测试还覆盖了名义工具偏心转动与整块共用单个观测锚点。[DROID 实际 FK](https://github.com/droid-dataset/droid/blob/33ae6a67274f36d2e29525b86f23a56616ef43a7/droid/franka/robot.py#L158-L167) · [NVIDIA 样本转换](https://github.com/NVIDIA/Isaac-GR00T/blob/376ba890cff8c9de64d71d982772a9c36185fdd7/scripts/download_droid_sample.py#L185-L202)
 

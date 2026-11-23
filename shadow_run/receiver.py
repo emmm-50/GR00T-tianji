@@ -61,7 +61,6 @@ class Receiver:
             raise ValueError('snapshot must contain 14 joints in left/right order')
         output = {'observation_id': request['observation_id'], 'mode': mode,
                   'ready_ns': ready, 'ik_lead_ns': lead,
-                  'sparse_sampling': mode == 'live' and lead > round(PERIOD_NUM / HZ),
                   'samples': [], 'failure': None}
         feedback = dict(feedback_source_ns=request.get('feedback_source_ns'),
                         feedback_received_ns=request.get('feedback_received_ns'))

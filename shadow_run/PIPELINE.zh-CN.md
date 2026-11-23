@@ -53,6 +53,6 @@ GR00T_TORCH_COMPILE=1 TORCHINDUCTOR_COMPILE_THREADS=2 \
   --out "logs/shadow-aligned-$(date +%Y%m%d-%H%M%S)"
 ```
 
-本阶段产品代码涉及 `shadow_run/run.py`、`receiver.py`、`prediction.py`，`tianji_adapter/capture_ros.py`、`geometry.py` 及相邻 pi05 的 `eef-control/host_mock/host_mock.py`。取消了每块的抢占事件及每子步的新块检查，现场线程池由两个线程减到一个。用于最新结果交接、定时观测和延后诊断的代码使上述六个生产文件合计比上阶段约多 35 行。15 项接收、采样和几何测试，以及独立的 Host mock 和录像 IK→Host 测试通过。发布收尾另核实了失败块的替换计数、生产者异常的保留和依赖关闭；接收、采样与几何回归共 17 项通过。碰撞缓存写入合并后，以同一目标回放 33 个 2 ms 子步，关节输出和位姿残差逐步一致。上表为这次收尾前的实测。[配套 IK 与 Host](https://github.com/emmm-50/tianji-openpi/tree/8c32a25ae45fe2ae45dd0bf6ae0f3927c03f702b/eef-control)
+本阶段产品代码涉及 `shadow_run/run.py`、`receiver.py`、`prediction.py`，`tianji_adapter/capture_ros.py`、`geometry.py` 及相邻 pi05 的 `eef-control/host_mock/host_mock.py`。取消了每块的抢占事件及每子步的新块检查，现场线程池由两个线程减到一个。用于最新结果交接、定时观测和延后诊断的代码使上述六个生产文件合计比上阶段约多 35 行。当时已用录像检查 IK 输出经 Host 接收，并在发布收尾核实了失败块的替换计数、生产者异常的保留和依赖关闭。碰撞缓存写入合并后，以同一目标回放 33 个 2 ms 子步，关节输出和位姿残差逐步一致。上表为这次收尾前的实测。[配套 IK 与 Host](https://github.com/emmm-50/tianji-openpi/tree/8c32a25ae45fe2ae45dd0bf6ae0f3927c03f702b/eef-control)
 
 基线、近格点试运行和最终原始记录分别在天玑私有 `logs/aligned-before-01/`、`logs/aligned-nearest-01/`、`logs/aligned-release-01/`。汇总工具和中间试验位于 `logs/aligned-pipeline-20261121/`。

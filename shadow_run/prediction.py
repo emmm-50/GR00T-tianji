@@ -29,7 +29,7 @@ from tianji_adapter.geometry import (
     anchored_ik_targets, encode_droid_pose,
 )
 from tianji_adapter.observations import load_snapshot
-from tianji_adapter.policy_probe import MODEL, policy_observation, summarize
+from tianji_adapter.policy import MODEL, policy_observation, summarize
 
 
 def _motion(targets, position, quaternion):
